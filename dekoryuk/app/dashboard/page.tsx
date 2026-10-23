@@ -1,7 +1,10 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Home, Image as ImageIcon, Camera, Sparkles, Eye, Check, PaintRoller, ImagePlus, RotateCcw, Download, Plus, ZoomIn, ZoomOut } from 'lucide-react';
+import { Home, Image as ImageIcon, Camera, Sparkles, Eye, Check, PaintRoller, ImagePlus, RotateCcw, Download, Plus, ZoomIn, ZoomOut, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Toaster, toast } from 'react-hot-toast';
+import Script from 'next/script'; // Tambahkan ini di deretan import
 
 export default function DashboardPage() {
   const [imageSrc, setImageSrc] = useState<string | null>(null);
@@ -10,10 +13,92 @@ export default function DashboardPage() {
   const [paintedData, setPaintedData] = useState<ImageData | null>(null);
   const [wallMask, setWallMask] = useState<Uint8Array | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1);
+  const [isMounted, setIsMounted] = useState(false);
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
 
-  const [debugMsg, setDebugMsg] = useState('Menunggu foto...');
+  const [userProfile, setUserProfile] = useState({
+    name: 'Pengguna',
+    picture: 'https://ui-avatars.com/api/?name=User&background=F6EDE9&color=C26046',
+    plan: 'Pemula' // Default class/perk
+  });
+
+
+  const [debugMsg, setDebugMsg] = useState('Menunggu foto...'); 
+
+  const [savedProjects, setSavedProjects] = useState<any[]>([]);
+
+  const fetchProjects = async () => {
+    const token = localStorage.getItem('accessToken');
+    if (!token) return;
+
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+      const response = await fetch(`${API_URL}/api/projects`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSavedProjects(data);
+      }
+    } catch (error) {
+      console.error("Gagal memuat proyek:", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchProjects();
+  }, []);
+
+  const router = useRouter();
+
+  useEffect(() => {
+    setIsMounted(true);
+    const token = localStorage.getItem('accessToken');
+    if (!token) {
+      router.push('/');
+      return;
+    }
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        setUserProfile({
+          name: parsed.name || 'Pengguna',
+          // Prioritaskan foto dari Google, jika tidak ada pakai inisial nama
+          picture: parsed.picture || parsed.avatarUrl || `https://ui-avatars.com/api/?name=${parsed.name || 'User'}&background=F6EDE9&color=C26046`,
+          plan: parsed.plan || 'Pemula'
+        });
+      } catch (e) {
+        console.error("Gagal membaca profil");
+      }
+    }
+  }, [router]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const [activeSlide, setActiveSlide] = useState(0);
+
+  const handleScroll = () => {
+    if (!carouselRef.current) return;
+    const scrollPosition = carouselRef.current.scrollLeft;
+    const slideWidth = carouselRef.current.clientWidth;
+    const currentSlide = Math.round(scrollPosition / slideWidth);
+    setActiveSlide(currentSlide);
+  };
+
+  const scrollToSlide = (index: number) => {
+    if (!carouselRef.current) return;
+    carouselRef.current.scrollTo({
+      left: index * carouselRef.current.clientWidth,
+      behavior: 'smooth'
+    });
+  };
 
   const colors = [
     { id: 'asli', name: 'Asli', hex: '#ffffff' },
@@ -42,6 +127,8 @@ export default function DashboardPage() {
       setSelectedColor('');
       
       setDebugMsg('Selesai!');
+
+      setTimeout(() => scrollToSlide(0), 300);
     } catch (error: any) {
       setDebugMsg(`ERROR: ${error.message || "Terjadi kesalahan tidak dikenal"}`);
     }
@@ -157,13 +244,104 @@ export default function DashboardPage() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const canvas = canvasRef.current;
-    if (canvas) {
-      const link = document.createElement('a');
-      link.download = 'Ruangan-DekorYuk.png';
-      link.href = canvas.toDataURL('image/png');
-      link.click();
+    if (!canvas) return;
+
+    const base64image = canvas.toDataURL('image/png');
+    const token = localStorage.getItem('accessToken');
+
+    if (!token) {
+      setDebugMsg('GAGAL: Anda belum login.');
+      return;
+    }
+    const toastId = toast.loading('Sedang menyimpan ke galeri...');
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http:localhost:5000';
+      const response = await fetch(`${API_URL}/api/projects`, {
+        method: 'POST',
+        headers: {
+          'Content-type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          image:base64image,
+          name: 'Desain Ruangan ' + new Date().toLocaleDateString(),
+          colorHex: selectedColor || '#ffffff'
+        })
+      });
+      const data = await response.json();
+
+      if (response.ok) {
+        toast.success('Karya berhasil disimpan!', { id: toastId });
+
+        fetchProjects();
+
+        const link = document.createElement('a');
+        link.download = 'Ruangan-DekorYuk.png';
+        link.href = base64image;
+        link.click();
+      } else {
+        toast.error(`Gagal menyimpan: ${data.message}`, { id: toastId });
+
+        if (response.status === 403) {
+          setIsUpgradeModalOpen(true);
+        }
+      }
+
+    } catch (error) {
+      toast.error('Error: Gagal terhubung ke server', { id: toastId });
+    }
+  };
+
+  const handleUpgrade = async (planToBuy: string) => {
+    const toastId = toast.loading('Menyiapkan pembayaran...');
+    try {
+      const token = localStorage.getItem('accessToken');
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+      
+      const response = await fetch(`${API_URL}/api/payment/subscribe`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ plan: planToBuy })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok && data.token) {
+        toast.dismiss(toastId);
+        setIsUpgradeModalOpen(false); // Tutup modal
+        
+        // Panggil Popup Midtrans Snap
+        (window as any).snap.pay(data.token, {
+          onSuccess: function(result: any) {
+            toast.success('Pembayaran Berhasil! Mengaktifkan paket Anda...');
+            // Nanti kita buat fungsi update status setelah ini
+
+            const updatedProfile = { ...userProfile, plan: result.gross_amount === '50000.00' ? 'pro' :'pelajar' };
+            setUserProfile(updatedProfile);
+            localStorage.setItem('user', JSON.stringify(updatedProfile));
+
+            setTimeout(() => window.location.reload(), 1500);
+          },
+          onPending: function(result: any) {
+            toast.success('Menunggu pembayaran Anda diselesaikan.');
+          },
+          onError: function(result: any) {
+            toast.error('Pembayaran gagal atau dibatalkan.');
+          },
+          onClose: function() {
+            toast.error('Anda menutup layar pembayaran.');
+          }
+        });
+      } else {
+        toast.error(`Gagal: ${data.message}`, { id: toastId });
+      }
+    } catch (error) {
+      toast.error('Gagal terhubung ke server.', { id: toastId });
     }
   };
 
@@ -288,8 +466,13 @@ export default function DashboardPage() {
     if (ctx && paintedData) ctx.putImageData(paintedData, 0, 0);
   }
 
+  if (!isMounted) return null;
+
   return (
-    <div className="min-h-screen bg-[#FAFAFA] font-sans flex flex-col w-full relative pb-10 shadow-2xl">
+    <div className="min-h-screen bg-[#FAFAFA] font-sans flex flex-col w-full max-w-xl mx-auto relative pb-10 shadow-2xl sm:border-x sm:border-gray-200">
+
+      <Toaster position="top-center" reverseOrder={false} />
+      <Script src="https://app.sandbox.midtrans.com/snap/snap.js" data-client-key={process.env.NEXT_PUBLIC_MIDTRANS_CLIENT_KEY} strategy="lazyOnload" />
       
       {/* Bagian Navigasi Atas */}
       <div className="flex justify-between items-center px-6 py-5">
@@ -297,155 +480,129 @@ export default function DashboardPage() {
           <div className="relative">
             <Home size={32} strokeWidth={2.5} />
             <PaintRoller size={16} className="absolute -bottom-1 -right-2" strokeWidth={3} /> 
-            </div>
+          </div>
           <span className="font-bold text-[#A1583D] text-2xl tracking-tight ml-1">DekorYuk</span>
         </div>
-        <div className="w-10 h-10 rounded-full bg-gray-300 overflow-hidden border border-gray-200">
-          <img src="https://i.pravatar.cc/150?img=5" alt="User Profile" className="w-full h-full object-cover" />
+        
+        {/* BAGIAN PROFIL & KELAS PENGGUNA */}
+        <div className="flex items-center gap-3">
+          {/* Badge Class / Perk */}
+          <button 
+            onClick={() => setIsUpgradeModalOpen(true)}
+            className="bg-gradient-to-r from-amber-100 to-yellow-300 text-yellow-800 text-[11px] font-extrabold px-3 py-1.5 rounded-full shadow-sm flex items-center gap-1 border border-yellow-300 uppercase tracking-wide hover:scale-105 active:scale-95 transition cursor-pointer"
+          >
+            <Sparkles size={12} fill="currentColor" />
+            {userProfile.plan}
+          </button>
+          
+          {/* Foto Profil Asli Google */}
+          <div className="w-10 h-10 rounded-full bg-gray-200 overflow-hidden border-2 border-white shadow-sm ring-2 ring-gray-100">
+            <img 
+              src={userProfile.picture} 
+              alt={userProfile.name} 
+              className="w-full h-full object-cover" 
+            />
+          </div>
         </div>
       </div>
 
       {/* Area Utama */}
-      <div className="px-5 mt-2">
-        {!imageSrc ? (
-          <div className="border-[1.5px] border-dashed border-[#C26046] rounded-[2rem] flex flex-col items-center justify-center text-center bg-[#FDFCF8] h-[520px] relative px-6 shadow-sm">
-            <div className="mb-8 w-48 h-48 bg-[#F6EDE9] rounded-full flex items-center justify-center relative">
-              <div className="absolute top-8 left-8 w-16 h-20 bg-[#D3C6BC] rounded opacity-50 rotate-[-10deg]"></div>
-              <div className="absolute top-10 right-8 w-14 h-16 bg-[#829D88] rounded opacity-50 rotate-[12deg]"></div>
-              <ImagePlus size={64} className="text-[#C26046] relative z-10" strokeWidth={1.5} />
-              <div className="absolute -bottom-2 right-10 bg-[#829D88] text-white p-2 rounded-full border-4 border-[#FDFCF8]">
-                 <ImageIcon size={20} />
+      <div className="mt-2 relative w-full overflow-hidden">
+        <div 
+          ref={carouselRef}
+          onScroll={handleScroll}
+          className="flex overflow-x-auto snap-x snap-mandatory scroll-smooth w-full pb-4"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        >
+          {/* SLIDE 1: KANVAS UTAMA ATAU UPLOAD AWAL */}
+          <div className="min-w-full snap-center px-5 flex flex-col">
+            {!imageSrc ? (
+              // Tampilan Upload Awal (Sama seperti kode Anda sebelumnya)
+              <div className="border-[1.5px] border-dashed border-[#C26046] rounded-[2rem] flex flex-col items-center justify-center text-center bg-[#FDFCF8] h-[520px] relative px-6 shadow-sm">
+                <div className="mb-8 w-48 h-48 bg-[#F6EDE9] rounded-full flex items-center justify-center relative">
+                  <div className="absolute top-8 left-8 w-16 h-20 bg-[#D3C6BC] rounded opacity-50 rotate-[-10deg]"></div>
+                  <div className="absolute top-10 right-8 w-14 h-16 bg-[#829D88] rounded opacity-50 rotate-[12deg]"></div>
+                  <ImagePlus size={64} className="text-[#C26046] relative z-10" strokeWidth={1.5} />
+                </div>
+                <h2 className="text-[26px] font-serif font-bold text-[#1a1a1a] mb-3 leading-tight">Upload your<br/>room photo</h2>
+                <p className="text-gray-500 mb-8 text-[15px]">Tambahkan foto ruangan baru</p>
+
+                <div className="flex flex-col gap-3 w-[85%]">
+                  <input id="kamera-input-1" type="file" accept="image/*" capture="environment" onChange={handleImageUpload} onClick={(e) => { (e.target as HTMLInputElement).value = '' }} style={{ display: 'none' }} />
+                  <input id="galeri-input-1" type="file" accept="image/*" onChange={handleImageUpload} onClick={(e) => { (e.target as HTMLInputElement).value = '' }} style={{ display: 'none' }} />
+                  
+                  <label htmlFor="kamera-input-1" className="bg-white text-[#c26046] border-2 border-[#c26046] px-4 py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition">
+                    <Camera size={18} /> Gunakan Kamera
+                  </label>
+                  <label htmlFor="galeri-input-1" className="bg-[#c26046] text-white px-4 py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-md cursor-pointer active:scale-95 transition">
+                    <ImageIcon size={18} /> Buka Galeri
+                  </label>
+                </div>
               </div>
-            </div>
+            ) : (
+              // Tampilan Kanvas (Sama seperti kode Anda sebelumnya)
+              <div className="relative h-[520px] shadow-lg border border-gray-100 bg-gray-200 overflow-hidden">
+                <div className="w-full h-full overflow-auto relative flex items-center justify-center">
+                  <div className="transition-transform duration-200 origin-center" style={{ transform: `scale(${zoomLevel})` }}>
+                    <canvas ref={canvasRef} width={400} height={520} className="cursor-crosshair block" onPointerDown={handleCanvasClick} style={{ touchAction: 'none' }} />
+                  </div>
+                </div>
 
-            <h2 className="text-[26px] font-serif dont-bold text-[#1a1a1a] mb-3 leading-tight">Upload your<br/>room photo</h2>
-            <p className="text-gray-500 mb-8 text-[15px]">Tambahkan foto ruangan baru</p>
+                <div className="absolute bottom-5 right-5 bg-white/95 backdrop-blur-md rounded-full flex items-center shadow-md border border-gray-100 z-10 overflow-hidden">
+                  <button onClick={() => setZoomLevel(prev => Math.max(1, prev - 0.5))} className="p-2.5 text-gray-600 hover:bg-gray-100"><ZoomOut size={18} /></button>
+                  <div className="w-[1px] h-5 bg-gray-200"></div>
+                  <button onClick={() => setZoomLevel(prev => Math.min(3, prev + 0.5))} className="p-2.5 text-gray-600 hover:bg-gray-100"><ZoomIn size={18} /></button>
+                </div>
 
-            <div className="bg-yellow-100 text-yellow-800 text-xs font-bold px-3 py-2 rounded-lg mb-4 w-[85%] text-center border border-yellow-300">
-              Status: {debugMsg}
-            </div>
+                <button onClick={handleAutoDetectWall} className="absolute top-5 left-5 bg-white/95 hover:bg-teal-50 px-3 py-2 rounded-full flex items-center gap-2 shadow-sm border border-gray-100 z-10">
+                  <Sparkles size={16} className="text-[#2dd4bf]" />
+                  <span className="text-xs font-bold text-gray-800">Deteksi Otomatis</span>
+                </button>
 
-            {/* TOMBOL UPLOAD LABEL MURNI */}
-            <div className="flex flex-col gap-3 w-[85%]">
-
-            {/* Tombol Upload Menggunakan Trik Opacity-0 */}
-            {/* Tombol Upload Menggunakan Trik Overlay Transparan */}
-            <div className="bg-blue-50 p-4 border-2 border-blue-500 rounded-xl w-[85%] mb-4">
-              <p className="text-blue-700 font-bold text-xs mb-3 text-center">DIAGNOSA FINAL REACT</p>
-              
-              {/* 1. TOMBOL TES (Untuk mengecek apakah React hidup) */}
-              <button 
-                onClick={() => setDebugMsg("REACT MASIH HIDUP! Silakan pilih foto.")}
-                className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl mb-4 active:scale-95 transition"
-              >
-                1. Klik Tombol Ini Dulu
-              </button>
-              
-              {/* 2. INPUT FILE (Dengan anti-bug file sama) */}
-              <input 
-                type="file" 
-                accept="image/*" 
-                onClick={(e) => { (e.target as HTMLInputElement).value = '' }} // Mencegah bug "file sama"
-                onChange={(e) => {
-                  try {
-                    setDebugMsg("Membaca file dari galeri...");
-                    const file = e.target.files?.[0];
-                    
-                    if (file) {
-                      setDebugMsg(`Menangkap: ${file.name}. Memuat...`);
-                      
-                      const reader = new FileReader();
-                      reader.onload = (event) => {
-                        setImageSrc(event.target?.result as string);
-                        setSelectedColor('');
-                        setDebugMsg("Selesai!");
-                      };
-                      reader.readAsDataURL(file);
-                    }
-                  } catch (err: any) {
-                    setDebugMsg(`Error: ${err.message}`);
-                  }
-                }} 
-                className="w-full text-black bg-white file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-100 file:text-blue-700" 
-              />
-            </div>
-            </div>
-            
-            <p className="text-[13px] text-gray-400 mt-4 font-medium">JPG atau PNG</p>
-            </div>
-        ) : (
-          <div className="relative h-[520px] shadow-lg border border-gray-100 bg-gray-200 overflow-hidden">
-            
-            {/* KOTAK PEMBUNGKUS DENGAN SCROLL OTOMATIS */}
-            <div className="w-full h-full overflow-auto relative flex items-center justify-center">
-              <div 
-                className="transition-transform duration-200 origin-center"
-                style={{ transform: `scale(${zoomLevel})` }}
-              >
-                
-                {/* Kanvas dengan dukungan Pointer dan Anti-Scroll */}
-                <canvas 
-                  ref={canvasRef}
-                  width={400}
-                  height={520}
-                  className="cursor-crosshair block"
-                  onPointerDown={handleCanvasClick} 
-                  style={{ touchAction: 'none' }}
-                />
-              </div>
-            </div>
-
-            {/* CONTROLLER ZOOM */}
-            <div className="absolute bottom-5 right-5 bg-white/95 backdrop-blur-md rounded-full flex items-center shadow-md border border-gray-100 z-10 overflow-hidden">
-              <button 
-                onClick={() => setZoomLevel(prev => Math.max(1, prev - 0.5))}
-                className="p-2.5 text-gray-600 hover:bg-gray-100 active:bg-gray-200 transition"
-                title="Perkecil"
-              >
-                <ZoomOut size={18} />
-              </button>
-              <div className="w-[1px] h-5 bg-gray-200"></div>
-              <button 
-                onClick={() => setZoomLevel(prev => Math.min(3, prev + 0.5))}
-                className="p-2.5 text-gray-600 hover:bg-gray-100 active:bg-gray-200 transition"
-                title="Perbesar"
-              >
-                <ZoomIn size={18} />
-              </button>
-            </div>
-
-            <button 
-              onClick={handleAutoDetectWall}
-              className="absolute top-5 left-5 bg-white/95 hover:bg-teal-50 active:scale-95 transition backdrop-blur-md px-3 py-2 rounded-full flex items-center gap-2 shadow-sm border border-gray-100 cursor-pointer z-10"
-            >
-              <Sparkles size={16} className="text-[#2dd4bf]" />
-              <span className="text-xs font-bold text-gray-800">Deteksi Otomatis</span>
-            </button>
-
-            <div 
-            onPointerDown={handleShowOriginal}
-            onPointerUp={handleRestorePainted}
-            onPointerLeave={handleRestorePainted}
-            className="absolute top-5 right-5 bg-white/95 backdrop-blur-md px-3 py-2 rounded-full flex items-center gap-2 shadow-sm border border-gray-100 cursor-pointer active:scale-95 transition select-none z-10"
-            >
-              <Eye size={16} className="text-gray-700"/>
-              <span className="text-xs font-bold text-gray-800">Sembunyikan seleksi</span>
-            </div>
-
-            {selectedColor !== 'transparent' && selectedColor !== '' &&(
-              <div className="absolute bottom-5 left-1/2 -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap animate-pulse backdrop-blur-sm pointer-events-none">
-                👆 Ketuk area dinding untuk mewarnai
+                <div onPointerDown={handleShowOriginal} onPointerUp={handleRestorePainted} onPointerLeave={handleRestorePainted} className="absolute top-5 right-5 bg-white/95 px-3 py-2 rounded-full flex items-center gap-2 shadow-sm border border-gray-100 cursor-pointer select-none z-10">
+                  <Eye size={16} className="text-gray-700"/>
+                  <span className="text-xs font-bold text-gray-800">Tahan Asli</span>
+                </div>
               </div>
             )}
           </div>
-        )}
 
-        <div className="flex justify-center items-center gap-2 mt-6">
-          <div className={`w-2.5 h-2.5 rounded-full transition-all ${!imageSrc ? 'bg-[#c26046] w-6' : 'bg-[#d9d9d9]'}`}></div>
-          <div className={`w-2.5 h-2.5 rounded-full transition-all ${imageSrc ? 'bg-[#c26046] w-6' : 'bg-[#d9d9d9]'}`}></div>
+          {/* SLIDE 2: MENU UNTUK MEMBUKA CANVAS BARU (Hanya muncul jika sedang mengedit) */}
+          {imageSrc && (
+            <div className="min-w-full snap-center px-5 flex flex-col justify-center">
+              <div className="border-[1.5px] border-dashed border-[#C26046] rounded-[2rem] flex flex-col items-center justify-center text-center bg-[#FDFCF8] h-[520px] relative px-6 shadow-sm">
+                
+                <div className="mb-6 w-24 h-24 bg-[#F6EDE9] rounded-full flex items-center justify-center relative">
+                  <ImagePlus size={40} className="text-[#C26046] relative z-10" strokeWidth={1.5} />
+                </div>
+                
+                <h2 className="text-[22px] font-serif font-bold text-[#1a1a1a] mb-2 leading-tight">Mulai Proyek Baru</h2>
+                <p className="text-gray-500 mb-8 text-[14px]">Upload foto lain untuk mengganti kanvas saat ini.</p>
+
+                <div className="flex flex-col gap-3 w-[85%]">
+                  <input id="kamera-input-2" type="file" accept="image/*" capture="environment" onChange={handleImageUpload} onClick={(e) => { (e.target as HTMLInputElement).value = '' }} style={{ display: 'none' }} />
+                  <input id="galeri-input-2" type="file" accept="image/*" onChange={handleImageUpload} onClick={(e) => { (e.target as HTMLInputElement).value = '' }} style={{ display: 'none' }} />
+                  
+                  <label htmlFor="kamera-input-2" className="bg-white text-[#c26046] border-2 border-[#c26046] px-4 py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition">
+                    <Camera size={18} /> Gunakan Kamera
+                  </label>
+                  <label htmlFor="galeri-input-2" className="bg-[#c26046] text-white px-4 py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-md cursor-pointer active:scale-95 transition">
+                    <ImageIcon size={18} /> Buka Galeri
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
+      {/* TITIK INDIKATOR YANG BISA DIKLIK */}
+      <div className="flex justify-center items-center gap-2 mt-2">
+        <button onClick={() => scrollToSlide(0)} className={`h-2.5 rounded-full transition-all duration-300 ${activeSlide === 0 ? 'bg-[#c26046] w-6' : 'bg-[#d9d9d9] w-2.5'}`}></button>
+        {imageSrc && (
+          <button onClick={() => scrollToSlide(1)} className={`h-2.5 rounded-full transition-all duration-300 ${activeSlide === 1 ? 'bg-[#c26046] w-6' : 'bg-[#d9d9d9] w-2.5'}`}></button>
+        )}
+      </div>
       <div className={`px-6 mt-8 transition-opacity duration-500 ${imageSrc ? 'opacity-100' : 'opacity-30 pointer-events-none'}`}>
         <div className="flex justify-between items-center mb-5">
           <h3 className="text-[22px] font-serif font-bold text-[#1A1A1A]">Pilih warna</h3>
@@ -500,7 +657,52 @@ export default function DashboardPage() {
           </button>
         </div>
       </div>
+      {/* ========================================== */}
+      {/* MODAL PILIH PAKET LANGGANAN                */}
+      {/* ========================================== */}
+      {isUpgradeModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-5">
+          <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl relative animate-in fade-in zoom-in duration-200">
+            <button 
+              onClick={() => setIsUpgradeModalOpen(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-700 bg-gray-100 p-1.5 rounded-full"
+            >
+              <X size={18} />
+            </button>
+            
+            <h2 className="text-2xl font-serif font-bold text-gray-800 mb-1 text-center">Upgrade Akun</h2>
+            <p className="text-gray-500 text-sm text-center mb-6">Pilih paket untuk menghilangkan batas penyimpanan dan watermark.</p>
+            
+            <div className="flex flex-col gap-4">
+              {/* Paket Pelajar */}
+              <div className="border-2 border-gray-200 hover:border-[#c26046] rounded-2xl p-4 transition cursor-pointer" onClick={() => handleUpgrade('pelajar')}>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-bold text-gray-800 text-lg">Pelajar</h3>
+                  <span className="font-bold text-[#c26046]">Rp 15.000</span>
+                </div>
+                <ul className="text-sm text-gray-600 space-y-1">
+                  <li>✨ Tanpa Watermark</li>
+                  <li>💾 Batas simpan 10 desain</li>
+                </ul>
+              </div>
 
+              {/* Paket Pro */}
+              <div className="border-2 border-[#c26046] bg-[#FDFCF8] rounded-2xl p-4 transition cursor-pointer relative overflow-hidden" onClick={() => handleUpgrade('pro')}>
+                <div className="absolute top-0 right-0 bg-[#c26046] text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg uppercase tracking-wide">Paling Laris</div>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-bold text-gray-800 text-lg">Pro</h3>
+                  <span className="font-bold text-[#c26046]">Rp 50.000</span>
+                </div>
+                <ul className="text-sm text-gray-600 space-y-1">
+                  <li>✨ Tanpa Watermark</li>
+                  <li>♾️ Bebas simpan tanpa batas</li>
+                </ul>
+              </div>
+            </div>
+            
+          </div>
+        </div>
+      )}
     </div>
   );
 }

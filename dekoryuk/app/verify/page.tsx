@@ -17,7 +17,8 @@ function VerifyContent() {
         
         const verifyMagicLink = async () => {
             try {
-                const response = await fetch('http://localhost:5000/auth/verify-magic-link', {
+                const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+                const response = await fetch(`${API_URL}/auth/verify-magic-link`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ token }),
@@ -30,7 +31,7 @@ function VerifyContent() {
                     localStorage.setItem('accessToken', data.token);
 
                     setTimeout(() => {
-                        router.push('/');
+                        router.push('/dashboard');
                     }, 2000);
                 } else {
                     setMessage(`❌ Gagal: ${data.message || 'Token tidak valid atau kedaluwarsa'}`);

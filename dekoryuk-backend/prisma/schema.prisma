@@ -12,6 +12,8 @@ model User {
   email     String    @unique
   name      String?
   googleId  String?   @unique
+  plan      String?   @default("pemula")
+  saveCount Int       @default(0)
   createdAt DateTime  @default(now())
   Project   Project[]
 }
