@@ -1,7 +1,7 @@
 import express from 'express';
 import type { Application, Request, Response, NextFunction } from 'express';
 import dotenv = require('dotenv');
-import { PrismaClient } from '@prisma/client';
+import { Plan, PrismaClient } from '@prisma/client';
 import { OAuth2Client } from 'google-auth-library';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
@@ -31,7 +31,7 @@ const transporter = nodemailer.createTransport({
 
 // Middleware dasar
 app.use(cors({
-    origin: ['http://localhost:3000', process.env.CLIENT_URL as string],
+    origin: ['http://localhost:3000', 'https://app-dekor-yuk.vercel.app'],
     credentials: true
 }));
 
@@ -54,13 +54,17 @@ app.post('/auth/google', async (req: Request, res: Response): Promise<any> => {
         const payload = ticket.getPayload();
         if (!payload || !payload.email) return res.status(400).json ({ message: 'Token tidak ditemukan' });
 
-        const { sub: googleId, email, name } = payload;
+        const { sub: googleId, email, name, picture } = payload;
         let user = await prisma.user.findUnique({ where: { email } });
 
         if (!user) {
-            user = await prisma.user.create({ data: { email, name: name || 'Pengguna', googleId } });  
-        } else if (!user.googleId) {
-            user = await prisma.user.update({ where: { id: user.id }, data: { googleId } });
+            user = await prisma.user.create(
+                { data: { email, name: name || 'Pengguna', googleId, picture } 
+            });  
+        } else if (user) {
+            user = await prisma.user.update({ 
+                where: { id: user.id }, 
+                data: { googleId, picture } });
         }
 
         const sessionToken = jwt.sign({ userId: user.id, email: user.email }, SECRET_KEY, { expiresIn: '7d' });
@@ -68,6 +72,33 @@ app.post('/auth/google', async (req: Request, res: Response): Promise<any> => {
     } catch (error) {
         console.error("Error Google Login:", error);
         return res.status(500).json({ message: 'Gagal memproses autentikasi Google.' });
+    }
+});
+
+app.get('/auth/me', async (req: Request, res: Response): Promise<any> => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ message: 'Akses ditolak. Token tidak ada.' });
+        }
+
+        const token = authHeader.split(' ')[1];
+        // Pastikan variabel SECRET_KEY sama dengan yang ada di rute login Anda
+        const decoded = jwt.verify(token, SECRET_KEY) as { userId: string };
+
+        const user = await prisma.user.findUnique({
+            where: { id: decoded.userId }
+        });
+
+        if (!user) {
+            return res.status(404).json({ message: 'User tidak ditemukan' });
+        }
+
+        // Kirim semua data user (termasuk picture) ke frontend
+        return res.status(200).json(user);
+    } catch (error) {
+        console.error("Error /auth/me:", error);
+        return res.status(401).json({ message: 'Sesi tidak valid atau kadaluarsa' });
     }
 });
 
@@ -261,7 +292,8 @@ app.post('/api/payment/subscribe', authenticateToken, async (req:Request, res: R
                 price: grossAmount,
                 quantity: 1,
                 name: `Langganan DekorYuk - Paket ${plan.toUpperCase()}`
-            }]
+            }],
+            custom_field1: user.id
         };
 
         const transaction = await snap.createTransaction(parameter);
@@ -287,8 +319,7 @@ app.post('/api/payment/notification', async (req: Request, res: Response): Promi
         const orderId = notification.order_id; // Format: DEKOR-UserId-Timestamp
 
         // Ambil ID pengguna dari string orderId
-        const parts = orderId.split('-');
-        const userId = parts[1]; // Mengambil bagian ID user
+        const userId = notification.custom_field1; // Mengambil bagian ID user
 
         if (!userId) {
             return res.status(400).json({ message: 'Order ID tidak valid' });
@@ -297,9 +328,9 @@ app.post('/api/payment/notification', async (req: Request, res: Response): Promi
         // Tentukan paket berdasarkan nominal atau item
         // Kita bisa cek dari gross_amount atau order ID, misal kita tentukan dari amount:
         const grossAmount = parseInt(notification.gross_amount);
-        let newPlan = 'pemula';
-        if (grossAmount === 15000) newPlan = 'pelajar';
-        else if (grossAmount === 50000) newPlan = 'pro';
+        let newPlan: Plan = Plan.pemula;
+        if (grossAmount === 15000) newPlan = Plan.pelajar;
+        else if (grossAmount === 50000) newPlan = Plan.pro;
 
         // Jika transaksi sukses/settlement
         if (transactionStatus == 'capture' || transactionStatus == 'settlement') {

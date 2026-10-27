@@ -63,20 +63,35 @@ export default function DashboardPage() {
       router.push('/');
       return;
     }
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
+
+    // Ambil data profil terbaru dari database setiap kali masuk Dashboard
+    const fetchUserProfile = async () => {
       try {
-        const parsed = JSON.parse(savedUser);
-        setUserProfile({
-          name: parsed.name || 'Pengguna',
-          // Prioritaskan foto dari Google, jika tidak ada pakai inisial nama
-          picture: parsed.picture || parsed.avatarUrl || `https://ui-avatars.com/api/?name=${parsed.name || 'User'}&background=F6EDE9&color=C26046`,
-          plan: parsed.plan || 'Pemula'
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+        // Pastikan endpoint ini sesuai dengan yang ada di backend Anda
+        const response = await fetch(`${API_URL}/auth/me`, { 
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
         });
-      } catch (e) {
-        console.error("Gagal membaca profil");
+
+        if (response.ok) {
+          const data = await response.json();
+          setUserProfile({
+            name: data.name || 'Pengguna',
+            picture: data.picture || data.avatarUrl || `https://ui-avatars.com/api/?name=${data.name || 'User'}&background=F6EDE9&color=C26046`,
+            plan: data.plan || 'Pemula'
+          });
+          // Simpan ulang ke memori lokal agar sinkron
+          localStorage.setItem('user', JSON.stringify(data)); 
+        }
+      } catch (error) {
+        console.error("Gagal memuat profil terbaru:", error);
       }
-    }
+    };
+
+    fetchUserProfile();
   }, [router]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -101,7 +116,7 @@ export default function DashboardPage() {
   };
 
   const colors = [
-    { id: 'asli', name: 'Asli', hex: '#ffffff' },
+    { id: 'putih', name: 'Putih', hex: '#ffffff' },
     { id: 'sage', name: 'Sage', hex: '#829d88' },
     { id: 'beige', name: 'Beige', hex: '#d3c6bc' },
     { id: 'biru', name: 'Biru', hex: '#7ba0b9' },
@@ -501,6 +516,11 @@ export default function DashboardPage() {
               src={userProfile.picture} 
               alt={userProfile.name} 
               className="w-full h-full object-cover" 
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                // Fallback: Jika foto tetap gagal dimuat, kembalikan ke inisial nama
+                e.currentTarget.src = `https://ui-avatars.com/api/?name=${userProfile.name}&background=F6EDE9&color=C26046`;
+              }}
             />
           </div>
         </div>
@@ -622,7 +642,7 @@ export default function DashboardPage() {
                 className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${selectedColor === color.hex ? 'ring-[3px] ring-offset-[2px] ring-[#C26046]' : 'border border-gray-200 hover:scale-105 shadow-sm'}`}
                 style={{ backgroundColor: color.hex }}
               >
-                {selectedColor === color.hex && <Check size={22} className={color.id === 'asli' ? 'text-gray-400' : 'text-white drop-shadow-md'} />}
+                {selectedColor === color.hex && <Check size={22} className={color.id === 'putih' ? 'text-gray-400' : 'text-white drop-shadow-md'} />}
               </button>
               <span className="text-[12px] text-[#4A4A4A] font-medium">{color.name}</span>
             </div>
@@ -674,18 +694,7 @@ export default function DashboardPage() {
             <p className="text-gray-500 text-sm text-center mb-6">Pilih paket untuk menghilangkan batas penyimpanan dan watermark.</p>
             
             <div className="flex flex-col gap-4">
-              {/* Paket Pelajar */}
-              <div className="border-2 border-gray-200 hover:border-[#c26046] rounded-2xl p-4 transition cursor-pointer" onClick={() => handleUpgrade('pelajar')}>
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="font-bold text-gray-800 text-lg">Pelajar</h3>
-                  <span className="font-bold text-[#c26046]">Rp 15.000</span>
-                </div>
-                <ul className="text-sm text-gray-600 space-y-1">
-                  <li>✨ Tanpa Watermark</li>
-                  <li>💾 Batas simpan 10 desain</li>
-                </ul>
-              </div>
-
+             
               {/* Paket Pro */}
               <div className="border-2 border-[#c26046] bg-[#FDFCF8] rounded-2xl p-4 transition cursor-pointer relative overflow-hidden" onClick={() => handleUpgrade('pro')}>
                 <div className="absolute top-0 right-0 bg-[#c26046] text-white text-[10px] font-bold px-2 py-1 rounded-bl-lg uppercase tracking-wide">Paling Laris</div>
@@ -696,6 +705,18 @@ export default function DashboardPage() {
                 <ul className="text-sm text-gray-600 space-y-1">
                   <li>✨ Tanpa Watermark</li>
                   <li>♾️ Bebas simpan tanpa batas</li>
+                </ul>
+              </div>
+
+               {/* Paket Pelajar */}
+              <div className="border-2 border-gray-200 hover:border-[#c26046] rounded-2xl p-4 transition cursor-pointer" onClick={() => handleUpgrade('pelajar')}>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-bold text-gray-800 text-lg">Pelajar</h3>
+                  <span className="font-bold text-[#c26046]">Rp 15.000</span>
+                </div>
+                <ul className="text-sm text-gray-600 space-y-1">
+                  <li>✨ Tanpa Watermark</li>
+                  <li>💾 Batas simpan 10 desain</li>
                 </ul>
               </div>
             </div>

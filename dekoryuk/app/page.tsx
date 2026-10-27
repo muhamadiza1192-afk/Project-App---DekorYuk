@@ -67,7 +67,7 @@ export default function LoginPage() {
   };
 
   return (
-    <GoogleOAuthProvider clientId={process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ""}>
+    <GoogleOAuthProvider clientId="32507370473-ek1jl7mlslaprgf8mge34e07lq4f0rgl.apps.googleusercontent.com">
     <div className="min-h-screen bg-[#FDFCF8] flex flex-col items-center py-10 px-5 font-sans">
       
       {/* Header & Title */}
